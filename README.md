@@ -1,36 +1,38 @@
 # MCP for SmartComms Document Automation
 
-This project is a hackathon demo that uses a real Model Context Protocol (MCP) architecture for document automation. It has two separate processes:
+This project is a real Model Context Protocol (MCP) hackathon demo for SmartComms document automation. It intentionally runs as two separate processes:
 
-- The MCP server in [mcp_server/server.py](mcp_server/server.py) exposes document tools over the official MCP stdio transport.
-- The FastAPI app in [app/main.py](app/main.py) acts as the MCP client and uses a real `ClientSession` to talk to that server.
+- The MCP server in [mcp_server/server.py](mcp_server/server.py) exposes document tools using the official MCP SDK over stdio transport.
+- The FastAPI app in [app/main.py](app/main.py) acts as the MCP client and uses a real `ClientSession` to call those tools over the protocol.
 
-The orchestration loop in [app/orchestrator.py](app/orchestrator.py) sends the tool schema to Anthropic Claude, lets Claude choose which MCP tool to call, and then feeds the tool result back into the next Claude request. This is the critical architecture distinction: the app is not calling Python functions directly; it is using the MCP client protocol to route requests to the server.
+The core orchestration loop in [app/orchestrator.py](app/orchestrator.py) sends the tool schema to Claude, waits for a tool call, executes it via the real MCP session, and feeds the tool output back into the next Claude request. This is the key architectural distinction: the app is not importing Python functions directly and calling them; it is routing tool use through MCP.
 
 ## Stack
 
 - Python + official `mcp` SDK
-- FastAPI + Jinja2 + SQLite + SQLAlchemy
-- python-docx for DOCX generation and edits
-- Anthropic Claude API for tool selection and orchestration
-- XML variable payloads on disk for template data
+- FastAPI + Jinja2
+- SQLite + SQLAlchemy
+- python-docx
+- Anthropic Claude API
+- XML variable payloads stored on disk per template/client
 
 ## Project layout
 
-- [mcp_server/server.py](mcp_server/server.py): MCP server entry point
-- [mcp_server/db.py](mcp_server/db.py): SQLite schema and mock data seeding
-- [mcp_server/tools](mcp_server/tools): tool implementations for template lookup, variable loading, document generation, heading lists, and content edits
-- [app/mcp_client.py](app/mcp_client.py): actual `ClientSession` setup and tool schema conversion
-- [app/orchestrator.py](app/orchestrator.py): Claude + MCP tool loop
-- [app/main.py](app/main.py): FastAPI routes and UI service
-- [app/templates/index.html](app/templates/index.html): single-page UI
-- [start.sh](start.sh): startup helper for creating mock data and launching both processes
+- [mcp_server/server.py](mcp_server/server.py): MCP server entry point and tool registration
+- [mcp_server/db.py](mcp_server/db.py): SQLite setup, seeding, and mock template metadata
+- [mcp_server/tools](mcp_server/tools): tool implementations for template lookup, variable loading, generation, headings, and edits
+- [app/mcp_client.py](app/mcp_client.py): real `ClientSession` wiring and Anthropic tool schema conversion
+- [app/orchestrator.py](app/orchestrator.py): Claude + MCP orchestration loop and validation/error handling
+- [app/main.py](app/main.py): FastAPI routes and web UI service
+- [app/templates/index.html](app/templates/index.html): single-page frontend for generate/edit/finalize flow
+- [start.sh](start.sh): auto-seeds data and starts both processes
+- [templates](templates): mock template docs and XML variable files for multiple clients
 
 ## Prerequisites
 
 - Python 3.11+
-- Anthropic API key in the environment as `ANTHROPIC_API_KEY`
 - `pip install -r requirements.txt`
+- Optional but recommended: `ANTHROPIC_API_KEY` in the environment for Claude-driven orchestration
 
 ## One-command startup
 
@@ -41,15 +43,15 @@ chmod +x start.sh
 ./start.sh
 ```
 
-This will:
+This does:
 
-1. Seed SQLite and templates on first run
-2. Start the dedicated MCP server process in the background
-3. Start the FastAPI app on http://localhost:8000
+1. Seed SQLite and mock docs/XML files if they are missing
+2. Launch the MCP server in a separate process
+3. Launch the FastAPI app on http://localhost:8000
 
 ## Manual two-terminal setup
 
-Terminal 1 (MCP server):
+Terminal 1 — MCP server:
 
 ```bash
 cd /workspaces/MCPentagon
@@ -57,7 +59,7 @@ export PYTHONPATH="$PWD"
 python mcp_server/server.py
 ```
 
-Terminal 2 (FastAPI app):
+Terminal 2 — FastAPI app:
 
 ```bash
 cd /workspaces/MCPentagon
@@ -68,55 +70,70 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 Then open http://localhost:8000.
 
-## Where the MCP boundary lives
+## Real MCP server/client boundary
 
-The real boundary is between:
+The actual protocol boundary is between:
 
-- [app/mcp_client.py](app/mcp_client.py): this creates the stdio-enabled `ClientSession` and calls `await session.initialize()` and `await session.call_tool(...)`.
-- [mcp_server/server.py](mcp_server/server.py): this exposes the tools with `@mcp.tool(...)` and runs on stdio via `mcp.run(transport="stdio")`.
+- [app/mcp_client.py](app/mcp_client.py): creates the stdio client, initializes the session, and calls `session.list_tools()` / `session.call_tool(...)`
+- [mcp_server/server.py](mcp_server/server.py): registers tools with `@mcp.tool(...)` and starts the server with `mcp.run(transport="stdio")`
 
-That means the FastAPI app is not importing the tool functions directly. Instead, it opens a separate process for the server and invokes tools over the MCP protocol. A judge can confirm this by reading the `ClientSession` calls in [app/mcp_client.py](app/mcp_client.py) and the `mcp.run(transport="stdio")` call in [mcp_server/server.py](mcp_server/server.py).
+This means the FastAPI app is not directly importing the tool logic and calling it in-process. Instead, it opens a separate server process and uses a real MCP client session to invoke tools. A judge can verify this by reading the client session calls in [app/mcp_client.py](app/mcp_client.py) and the server startup in [mcp_server/server.py](mcp_server/server.py).
 
-## How the tool loop works
+## Orchestration flow
 
-The orchestrator in [app/orchestrator.py](app/orchestrator.py) does this:
+The orchestrator in [app/orchestrator.py](app/orchestrator.py) performs this loop:
 
-1. Opens a real MCP client session to the server
-2. Lists tools via `session.list_tools()`
-3. Converts the MCP tool schema to Anthropic tool format
-4. Calls Claude with those tools attached
-5. When Claude emits a `tool_use` block, executes it with `session.call_tool(...)`
-6. Feeds the result back to Claude and repeats until the task is complete
+1. Opens a real MCP session to the server
+2. Lists the server tools
+3. Converts the tool schema to Anthropic tool format
+4. Calls Claude with the tools attached
+5. When Claude returns a tool call, invokes it with `session.call_tool(...)`
+6. Feeds the tool output back into Claude until the workflow completes
 
-This is the actual MCP-aware architecture that matches the requested demo design.
+The app also has explicit validation for missing template/client combinations and missing variable data, so the UI shows a clear error message instead of failing silently.
 
-## Demo flow
+## Demo behavior
 
-- Generate from a template + client ID
-- Claude chooses the tool sequence: `find_template` -> `fetch_variable_data` -> `generate_document` -> `list_headings`
-- The UI displays the trace in the “Live MCP Trace” panel
-- The user can submit heading-level edit instructions, which Claude routes to `apply_content_edit`
-- Finalize to download the `.docx` output
+- Select a template and client ID
+- Generate a document
+- Claude decides the correct tool order, typically: `find_template` -> `fetch_variable_data` -> `generate_document` -> `list_headings`
+- The trace panel reflects each tool call and result in real time
+- Use the heading outline to submit an edit instruction
+- Finalize and download the generated DOCX
 
-## Verifying the MCP routing in the UI
+## Error handling in the UI
 
-A judge can verify this visually in the browser:
+The app includes graceful handling for bad inputs, such as:
 
-- The trace panel shows each tool call as it happens, labeled with the actual MCP tool name
-- Each entry includes the tool input and returned text result
-- The orchestrator calls the tool via `ClientSession.call_tool(...)`, not by direct Python imports
+- nonexistent template name
+- client ID not mapped to that template
+- missing XML variable file for the template/client pair
+- invalid docx path or document finalization failure
+
+When this happens, the backend returns a structured error and the frontend shows it in the output area and trace panel.
+
+## Verifying MCP routing visually
+
+A judge can confirm the architecture in the browser:
+
+- The trace panel lists each tool call under the real tool name
+- Each entry includes the MCP input and the raw tool result
+- The backend code in [app/mcp_client.py](app/mcp_client.py) shows the actual `ClientSession` calls
+- The server code in [mcp_server/server.py](mcp_server/server.py) shows the tool registration and stdio transport
 
 ## Seeded mock data
 
 On first run, the project seeds:
 
-- SQLite entries in `client_template_map`
+- SQLite `client_template_map` rows for the sample clients
 - Template folders under [templates](templates)
-- XML variable payloads under each template's `variables` directory
-- DOCX files under each template's `docs` directory
+- XML variable files under each template's `variables` directory
+- DOCX template files under each template's `docs` directory
+
+The sample clients include the demo IDs such as `3227`, `4410`, and `9001`.
 
 ## Notes
 
-- The project intentionally keeps the MCP server and app as separate processes for a real demo architecture.
-- Because this is a Codespace hackathon setup, stdio transport is used for simplicity and reliability.
-- Built-in guardrails ensure the client only calls the tools the server exposes.
+- This project intentionally uses stdio transport to keep the local demo simple and reliable in a Codespace environment.
+- Built-in guardrails ensure the client only calls tools the server exposes.
+- The app supports both a real Claude-driven flow and a deterministic demo fallback when `ANTHROPIC_API_KEY` is not configured.

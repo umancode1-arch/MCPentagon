@@ -1,0 +1,2 @@
+<?xml version='1.0' encoding='utf-8'?>
+<variables client_id="3227" template_name="dapply" version="2"><field name="applicant_name">Alicia Morgan</field><field name="loan_amount">$15,000</field><field name="purpose">Home improvement</field><field name="decision_date">2026-09-25</field><field name="risk_score">74</field><field name="review_note">Strong candidate with stable income history.</field><field name="fee_type">Application Fee</field><field name="fee_amount">$250</field></variables>

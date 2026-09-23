@@ -1,0 +1,2 @@
+<?xml version='1.0' encoding='utf-8'?>
+<variables client_id="9001" template_name="dapproval" version="2"><field name="approver_name">Devon White</field><field name="approval_date">2026-10-05</field><field name="policy_version">v4.3</field><field name="legal_notes">Rental product exception reviewed and approved.</field><field name="decision_summary">Approval on expedited review track.</field><field name="fee_type">Expedite Fee</field><field name="fee_amount">$90</field></variables>

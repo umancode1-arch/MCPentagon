@@ -1,0 +1,7 @@
+anthropic>=0.57.0
+fastapi>=0.115.0
+jinja2>=3.1.4
+mcp<2
+python-docx>=1.1.2
+sqlalchemy>=2.0.0
+uvicorn>=0.30.0

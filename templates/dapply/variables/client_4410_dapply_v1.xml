@@ -1,0 +1,2 @@
+<?xml version='1.0' encoding='utf-8'?>
+<variables client_id="4410" template_name="dapply" version="1"><field name="applicant_name">Jordan Lee</field><field name="loan_amount">$24,000</field><field name="purpose">Vehicle purchase</field><field name="decision_date">2026-10-02</field><field name="risk_score">67</field><field name="review_note">Moderate risk; requires standard disclosures.</field><field name="fee_type">Doc Prep Fee</field><field name="fee_amount">$150</field></variables>

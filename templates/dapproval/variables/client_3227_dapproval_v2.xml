@@ -1,0 +1,2 @@
+<?xml version='1.0' encoding='utf-8'?>
+<variables client_id="3227" template_name="dapproval" version="2"><field name="approver_name">Renee Shaw</field><field name="approval_date">2026-09-27</field><field name="policy_version">v4.2</field><field name="legal_notes">Approved subject to KYC verification.</field><field name="decision_summary">Customer meets policy thresholds.</field><field name="fee_type">Approval Fee</field><field name="fee_amount">$150</field></variables>

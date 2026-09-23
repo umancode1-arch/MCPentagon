@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MCP SmartComms Document Automation</title>
+    <style>
+      body { font-family: Arial, sans-serif; background: #f5f7fb; margin: 0; color: #1f2937; }
+      .container { max-width: 1200px; margin: 20px auto; padding: 24px; }
+      .panel { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 2px 12px rgba(15,19,30,0.08); margin-bottom: 20px; }
+      h1, h2 { margin-top: 0; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+      label { display: block; font-weight: 600; margin-bottom: 8px; }
+      select, input, textarea, button { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 8px; border: 1px solid #d1d5db; font-size: 14px; }
+      button { background: #2563eb; color: white; border: none; cursor: pointer; font-weight: 600; }
+      .secondary { background: #111827; }
+      .trace { background: #0f172a; color: #e2e8f0; border-radius: 12px; padding: 12px; max-height: 420px; overflow-y: auto; font-family: monospace; }
+      .trace-item { padding: 10px 0; border-bottom: 1px solid rgba(148,163,184,0.3); }
+      .code { font-family: monospace; white-space: pre-wrap; }
+      .muted { color: #6b7280; }
+      .row { display: flex; gap: 12px; }
+      .row > * { flex: 1; }
+      #download-link { display: inline-block; margin-top: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>MCP for SmartComms Document Automation</h1>
+
+      <div class="panel">
+        <div class="grid">
+          <div>
+            <label for="template-select">Template</label>
+            <select id="template-select">
+              <option value="account_agreement">Account Agreement</option>
+              <option value="dapply">dApply</option>
+              <option value="dapproval">dApproval</option>
+            </select>
+          </div>
+          <div>
+            <label for="client-id">Client ID</label>
+            <input id="client-id" value="3227" />
+          </div>
+        </div>
+        <div class="row" style="margin-top: 16px;">
+          <button id="generate-btn">Generate</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Live MCP Trace</h2>
+        <div id="trace" class="trace">
+          <div class="trace-item">Waiting for orchestration…</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="grid">
+          <div>
+            <h2>Generated Heading Outline</h2>
+            <div id="heading-outline" class="muted">No document generated yet.</div>
+          </div>
+          <div>
+            <label for="edit-instruction">Edit instruction</label>
+            <textarea id="edit-instruction" rows="6" placeholder="Example: In 'How Fees Work', replace the second sentence with 'Fees are waived for balances above $1,000.'"></textarea>
+            <div class="row" style="margin-top: 12px;">
+              <button id="apply-edit-btn" class="secondary">Apply Edit</button>
+              <button id="finalize-btn">Finalize</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Final Output</h2>
+        <div id="output-summary" class="muted">No final output yet.</div>
+        <a id="download-link" style="display:none"></a>
+      </div>
+    </div>
+
+    <script>
+      let currentDocPath = '';
+
+      function renderTrace(entries) {
+        const container = document.getElementById('trace');
+        if (!entries || !entries.length) {
+          container.innerHTML = '<div class="trace-item">No MCP calls yet.</div>';
+          return;
+        }
+        container.innerHTML = entries.map(entry => `
+          <div class="trace-item">
+            <div><strong>${entry.tool_name}</strong></div>
+            <div>Input: <span class="code">${JSON.stringify(entry.input, null, 2)}</span></div>
+            <div>Result: <span class="code">${entry.output}</span></div>
+          </div>
+        `).join('');
+      }
+
+      function renderHeadings(headings) {
+        const container = document.getElementById('heading-outline');
+        if (!headings || !headings.length) {
+          container.textContent = 'No headings available.';
+          return;
+        }
+        container.innerHTML = headings.map(h => `<div>• ${h.heading || h.title || JSON.stringify(h)}</div>`).join('');
+      }
+
+      async function callApi(path, payload) {
+        const response = await fetch(path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          const message = data.detail || data.message || 'Request failed';
+          throw new Error(message);
+        }
+        if (data.status === 'error') {
+          throw new Error(data.message || 'Request failed');
+        }
+        return data;
+      }
+
+      document.getElementById('generate-btn').addEventListener('click', async () => {
+        const templateName = document.getElementById('template-select').value;
+        const clientId = document.getElementById('client-id').value;
+        try {
+          const data = await callApi('/generate-document', { template_name: templateName, client_id: clientId });
+          renderTrace(data.trace || []);
+          const output = data.final_text || 'Document generation completed.';
+          document.getElementById('output-summary').textContent = output;
+          if (data.trace && data.trace.length) {
+            const lastTool = data.trace[data.trace.length - 1];
+            const pathMatch = lastTool.output.match(/\/[^\s]+\.docx/);
+            if (pathMatch) currentDocPath = pathMatch[0];
+          }
+          const generatedPath = data.docx_path || currentDocPath;
+          if (generatedPath) {
+            currentDocPath = generatedPath;
+            const headingOutput = await callApi('/finalize', { docx_path: generatedPath });
+            renderHeadings(headingOutput.headings || []);
+            const download = document.getElementById('download-link');
+            download.href = headingOutput.download_url || '/download?path=' + encodeURIComponent(generatedPath);
+            download.textContent = 'Download final document';
+            download.style.display = 'inline-block';
+          }
+        } catch (err) {
+          const msg = err.message || 'Unknown error';
+          document.getElementById('output-summary').textContent = 'Error: ' + msg;
+          const trace = document.getElementById('trace');
+          trace.innerHTML = '<div class="trace-item">Error: ' + msg + '</div>';
+        }
+      });
+
+      document.getElementById('apply-edit-btn').addEventListener('click', async () => {
+        const instruction = document.getElementById('edit-instruction').value;
+        if (!currentDocPath) {
+          document.getElementById('output-summary').textContent = 'Generate a document before applying edits.';
+          return;
+        }
+        try {
+          const data = await callApi('/apply-edit', { docx_path: currentDocPath, instruction });
+          renderTrace(data.trace || []);
+          document.getElementById('output-summary').textContent = data.result || 'Edit applied successfully.';
+        } catch (err) {
+          const msg = err.message || 'Unknown error';
+          document.getElementById('output-summary').textContent = 'Error: ' + msg;
+          const trace = document.getElementById('trace');
+          trace.innerHTML = '<div class="trace-item">Error: ' + msg + '</div>';
+        }
+      });
+
+      document.getElementById('finalize-btn').addEventListener('click', async () => {
+        if (!currentDocPath) {
+          document.getElementById('output-summary').textContent = 'Generate a document before finalizing.';
+          return;
+        }
+        try {
+          const data = await callApi('/finalize', { docx_path: currentDocPath });
+          document.getElementById('output-summary').textContent = 'Finalized document ready for download.';
+          const download = document.getElementById('download-link');
+          download.href = data.download_url || '/download?path=' + encodeURIComponent(currentDocPath);
+          download.textContent = 'Download final document';
+          download.style.display = 'inline-block';
+          renderHeadings(data.headings || []);
+        } catch (err) {
+          const msg = err.message || 'Unknown error';
+          document.getElementById('output-summary').textContent = 'Error: ' + msg;
+          const trace = document.getElementById('trace');
+          trace.innerHTML = '<div class="trace-item">Error: ' + msg + '</div>';
+        }
+      });
+    </script>
+  </body>
+</html>
